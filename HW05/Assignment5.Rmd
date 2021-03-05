@@ -1,0 +1,178 @@
+---
+title: "Assignment5"
+author: "Hanna Matera"
+date: "03/03/2021"
+output: html_document
+---
+
+1. Task 1: Analyze burial mound health
+
+Here, I am going to analyze the spatial distribution of burial mounds in the Bulgarian region of Kazanlak Valley in relation to their properties (i.e. whether or not they have been robbed). In order to do that I am first going to spatially plot the raster image of the valley and then plot the layer of mounds based on their geospatial coordinates. I am going to color-code them so that I will be able to see if e.g. mound located in places with big elevation and steep slopes are more prone to robbery. 
+
+Then, I am going to create a histogram representing the distribution of burial mounds in relation to elevation and split by condition:Robbed. In this way, I can see if the patterns of distribution are different between condition:Robbed vs Non-robbed. My hypothesis here is that Non-robbed mounds are gonna be located in highly elevated regions and the opposte will be true for non-robbed mounds.
+
+```{r}
+
+#loading necessary packages and data 
+library(knitr)
+library(rmdformats)
+library(tidyverse)
+library(shiny)
+library(lattice)
+library(latticeExtra)
+library(RColorBrewer)
+library(rasterVis)
+library(rgdal)
+library(rgl)
+library(sf)
+
+
+#plotting aster image
+aster <- raster("data/Aster.tif")
+plot(aster)
+
+#data with mound condition
+data <- read_csv("data/KAZ_mdata.csv")
+
+#reading data on the mounds (with information about their location)
+mound <- st_read("data/KAZ_mounds.shp")
+
+
+#reclassifying aster image - to get rid of outlayers 
+rclmat <- cbind(-10000,-1, NA)
+aster <- reclassify(w, rcl = rclmat)
+plot(aster)
+
+#inspecting the crs of aster and mounds data 
+st_crs(mound) == st_crs(aster)
+#they match 
+
+
+#joining data frames of mounds and with data on mounds condition based on the ID column 
+joined <- left_join(data, mound, by= c("MoundID" = "TRAP_Code") )
+
+#extracting different properties of the land (slope and aspect) and displaying them in the plot
+slope_asp = terrain(aster, opt=c('slope', 'aspect'), unit='degrees', neighbors=8)
+plot(slope_asp)
+
+#changing the class so that it is an sf object and not a data frame 
+joined <- st_as_sf(joined)
+class(joined) # it is a spatial object now and can worh with raster 
+
+
+# Converting to a Spatial object - bc the function mask (raster package) does not support objects that are sf 
+joined_sp <- as(joined, "Spatial")
+                   
+
+## Crop aster with join_sp
+aster_crop <- crop(aster, joined_sp)
+
+# Plot the cropped version and compare
+plot(aster_crop)
+
+# we might need to extract the information about the exact elevation 
+aster_ex <- raster::extract(aster_crop, joined_sp)
+
+# calculating a plotting derived values of slope and aspect 
+aster_slope <- terrain(aster_crop, opt = 'slope', unit = 'degrees')  #calculate slope
+aster_aspect <- terrain(aster_crop, opt = 'aspect', unit = 'degrees') #calculate aspect
+
+#plotting slope and aspect
+plot(aster_slope)
+
+
+# changing the Robbed column into a factor
+joined_sp$Robbed <- factor(joined_sp$Robbed) 
+
+
+#plotting with rasterVis (with croped aster and information about elevation)
+rasterVis::levelplot(aster_crop,
+  margin = list(x = F, 
+                y = T),
+  col.regions = terrain.colors(30),
+  xlab = list (label = "", 
+               vjust = -.25),
+  sub = list(             # specifying the display of the axes descriptions
+    label = "Elevation (m)",
+    font = 1,
+    cex = .9,
+    hjust = 1.5),
+  key = list(       # adding a legend
+    space = "top",
+    points = list(
+      pch = 1,
+      col = c("blue","red")), 
+    text = list(
+      c("Not-robbed","Robbed"), #legend description
+      cex=.8))
+  ) + 
+  spplot(joined_sp, # adding a layer of points (placing the mounds)
+         zcol = "Robbed", 
+         cex = .6,
+         pch = 1,
+         col.regions = c("blue","red")
+         )  
+
+#plotting again (with slope aster and information about slope)
+rasterVis::levelplot(aster_slope,
+  margin = list(x = F, 
+                y = T),
+  col.regions = terrain.colors(30),
+  xlab = list (label = "", 
+               vjust = -.25),
+  sub = list(             # specifying the display of the axes descriptions
+    label = "Elevation (m)",
+    font = 1,
+    cex = .9,
+    hjust = 1.5),
+  key = list(       # adding a legend
+    space = "top",
+    points = list(
+      pch = 1,
+      col = c("blue","red")), 
+    text = list(
+      c("Not-robbed","Robbed"), #legend description
+      cex=.8))
+  ) + 
+  spplot(joined_sp, # adding a layer of points (placing the mounds)
+         zcol = "Robbed", 
+         cex = .6,
+         pch = 1,
+         col.regions = c("blue","red")
+         )  
+
+```
+Observations: 
+What we can see is that generally, burial mounds are located in areas where both the elevation and the slope are relatively low with no burial mounds located in the high-located areas. There seems to be a large clustering of burial mounds in the upper part of the map, following the line where the elevation and slope change rapidly. It is legitimate to assume that burial mounds were built in the vicinity of that natural barrier as it protected them from, e.g. looting or unfavorable weather conditions. 
+
+Upon plotting the mounds and color-coding them by contition:Robbed we can see that there seems to be no generalizable patterns in the spread of the mounds that were and were not robbed. Therefore, the land elevation and slope seems not to have any impact on whether the burial mounds were likely to be robbed.
+
+``` {r}
+
+ # we might need to extract the information about the exact elevation of aster
+aster_ex <- raster::extract(aster_crop, joined_sp)
+
+#I am appending a list of elevations to the data frame with information about mounds 
+joined$elevation <-aster_ex
+
+
+#we need to drop NAs in Robbed condition so that we only have 0 and 1s as possible values
+joined <- joined %>% drop_na()
+
+#renaming 0,1 to not-robbed and robbed 
+joined$Robbed <- ifelse(joined$Robbed == 0, "Not Robbed", "Robbed")
+
+
+#plotting the distribution of the mounds according to elevation, facet wrapped by condition:Robbed
+ggplot(data=joined, aes(x=joined$elevation))+
+  geom_histogram(col="red",fill="pink")+facet_wrap(.~Robbed)
+
+
+```
+
+## Here, we can see that the hypothesis wasn't confirmed. By looking at the histogram we can see that there seems not to be any patterns in the distribution of burial mounds according to condition:robbed. The mounds are equally likely to be robbe, no matter whether they are located in areas of high or low elevation or steep vs flat slopes.  
+
+
+
+
+
